@@ -128,13 +128,13 @@ BEGIN
  END IF;
  FOR r IN
    SELECT * FROM inventory_reservations
-    WHERE status='reserved' AND expires_at<=now()
+    WHERE status='reserved' AND expires_at<=clock_timestamp()
     ORDER BY expires_at,id
     FOR UPDATE SKIP LOCKED
     LIMIT p_limit
  LOOP
    UPDATE inventory_reservations
-      SET status='expired',resolved_at=now()
+      SET status='expired',resolved_at=clock_timestamp()
     WHERE id=r.id AND status='reserved';
    IF FOUND THEN
      UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
