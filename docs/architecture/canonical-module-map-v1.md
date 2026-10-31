@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 管理员角色与权限 | `src/features/auth/permissions.ts` | `authorization.ts` 不得另行维护角色/权限表；如有独有策略，迁移为本模块的纯策略函数后删除重复定义 | 集成回归测试直接验证 finance、food_review、support、security_admin 隔离 |
 | SKU 与库存规则 | `src/features/catalog/sku-domain.ts` | `sku.ts` 仅允许作为短期兼容适配；调用方迁移后删除 | 已被领域回归测试覆盖无限库存、负库存、非法规格和预留边界 |
-| 订单状态与核心规则 | `src/features/orders/order-domain.ts` | `calculation.ts` 不再定义第二套订单状态；金额算法应收敛为 order-domain 的唯一导出或由其调用 | 状态转换、退款暂停自动收货、应付金额边界在集成测试中已有覆盖 |
+| 订单状态与核心规则 | `src/features/orders/order-domain.ts` | 不再导出金额公式；`calculation.ts` 是唯一金额计算模块 | 状态转换与退款暂停自动收货由 order-domain 负责；金额与折扣边界由 calculation 负责 |
 | 订单金额计算 | `src/features/orders/calculation.ts` | 不得在其他文件复制金额算法；order-domain 只调用本模块或提供明确兼容导出 | 当前已覆盖多订单行、折扣、运费及安全整数溢出 |
 | 财务分录校验 | `src/features/finance/ledger-domain.ts` | `ledger.ts` 不得维护第二套金额/分录模型；迁移调用方后删除 | 已覆盖 CNY、借贷平衡、空分录、溢出和冲正规则 |
 | 双人审批规则 | `src/features/admin/approval-domain.ts` | `approvals.ts` 不得维护另一套固定/可变审批模型；策略参数化后仅保留一个接口 | 当前回归测试要求两名不同审批人、分阶段、不可自批、不可跨申请 |
@@ -41,3 +41,9 @@
 - [ ] 幂等键在重试时稳定复用；资金/库存并发测试通过。
 - [ ] CI 的依赖审计、回归、类型、lint、生产构建全部通过。
 - [ ] PostgreSQL 15 隔离库迁移、回滚与并发测试通过。
+
+
+## v1.1 收敛记录
+- 已从 `order-domain.ts` 移除重复的订单应付金额公式；金额计算唯一归属 `calculation.ts`。
+- 回归测试相应调整，避免测试继续依赖重复实现。
+- 角色、SKU、财务、审批的旧模块位于独立草稿 PR 分支；本集成分支未盲目复制或删除它们。后续在统一调用方前，继续保持 PR #2–#7 草稿状态。
