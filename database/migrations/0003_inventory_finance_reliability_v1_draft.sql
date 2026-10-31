@@ -99,22 +99,41 @@ CREATE INDEX idx_merchant_withdrawals_review ON merchant_withdrawals(status,requ
 -- Explicit journal-entry balance validation. This deferred constraint trigger checks the final
 -- transaction state, allowing debit and credit lines to be inserted in separate statements.
 CREATE OR REPLACE FUNCTION assert_journal_entry_balanced() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE target_entry uuid; debit_total numeric(18,2); credit_total numeric(18,2); entry_status text;
+LANGUAGE plpgsql AS $
+DECLARE
+ target_entry uuid;
+ check_entry uuid;
+ debit_total numeric(18,2);
+ credit_total numeric(18,2);
+ entry_status text;
 BEGIN
- target_entry := COALESCE(NEW.entry_id, OLD.entry_id);
- SELECT status INTO entry_status FROM journal_entries WHERE id=target_entry;
- IF NOT FOUND THEN RETURN NULL; END IF;
- IF entry_status='posted' THEN
-   SELECT COALESCE(sum(debit),0), COALESCE(sum(credit),0)
-     INTO debit_total,credit_total FROM journal_lines WHERE entry_id=target_entry;
-   IF debit_total=0 OR debit_total<>credit_total THEN
-     RAISE EXCEPTION 'journal entry % is not balanced (debit %, credit %)',target_entry,debit_total,credit_total
-       USING ERRCODE='23514';
-   END IF;
+ -- On UPDATE, validate both sides if a journal line moves between entries.
+ IF TG_OP = 'DELETE' THEN
+   target_entry := OLD.entry_id;
+ ELSE
+   target_entry := NEW.entry_id;
  END IF;
+
+ FOR check_entry IN
+   SELECT DISTINCT x
+   FROM unnest(ARRAY[
+     CASE WHEN TG_OP IN ('UPDATE','DELETE') THEN OLD.entry_id ELSE NULL END,
+     CASE WHEN TG_OP IN ('INSERT','UPDATE') THEN NEW.entry_id ELSE NULL END
+   ]) AS t(x)
+   WHERE x IS NOT NULL
+ LOOP
+   SELECT status INTO entry_status FROM journal_entries WHERE id=check_entry;
+   IF FOUND AND entry_status='posted' THEN
+     SELECT COALESCE(sum(debit),0), COALESCE(sum(credit),0)
+       INTO debit_total,credit_total FROM journal_lines WHERE entry_id=check_entry;
+     IF debit_total=0 OR debit_total<>credit_total THEN
+       RAISE EXCEPTION 'journal entry % is not balanced (debit %, credit %)',check_entry,debit_total,credit_total
+         USING ERRCODE='23514';
+     END IF;
+   END IF;
+ END LOOP;
  RETURN NULL;
-END $$;
+END $;
 CREATE CONSTRAINT TRIGGER trg_journal_lines_balanced
 AFTER INSERT OR UPDATE OR DELETE ON journal_lines
 DEFERRABLE INITIALLY DEFERRED
