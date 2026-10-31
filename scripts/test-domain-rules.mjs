@@ -48,5 +48,8 @@ test("双人审批阻止重复审批和申请人自批", () => {
   assert.deepEqual(admin.validateTwoPersonApproval(base), { ok: true });
   assert.equal(admin.validateTwoPersonApproval([base[0], { ...base[1], approverUserId: "u2" }]).ok, false);
   assert.equal(admin.validateTwoPersonApproval([base[0], { ...base[1], approverUserId: "u1" }]).ok, false);
+  assert.equal(admin.validateTwoPersonApproval([base[0], { ...base[1], approvalStage: "first" }]).ok, false);
+  assert.equal(admin.validateTwoPersonApproval([...base, { ...base[1], approverUserId: "u4" }]).ok, false);
+  assert.equal(admin.validateTwoPersonApproval([base[0], { ...base[1], requesterUserId: "u9" }]).ok, false);
 });
 console.log(`Domain rule tests: ${passed} passed.`);
