@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [campus-app-development-v1]
+    branches: [campus-app-development-v1, work/database-review-v1]
   pull_request:
     branches: [main, campus-app-development-v1]
 
