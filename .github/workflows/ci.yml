@@ -2,12 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [campus-app-development-v1]
+    branches: [campus-app-development-v1, "work/**"]
   pull_request:
     branches: [main, campus-app-development-v1]
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -22,14 +26,11 @@ jobs:
       - name: Install dependencies
         run: npm install
       - name: Audit all dependencies
-        run: |
-          npm audit --json > npm-audit-full.json || true
-          node -e "const a=require('./npm-audit-full.json'); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, advisories:Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==='string'?x:{name:x.name,title:x.title,range:x.range,url:x.url})}))},null,2))"
+        run: npm audit --json > npm-audit-full.json || true
       - name: Audit production dependencies
-        run: |
-          npm audit --omit=dev --json > npm-audit-production.json || true
-          node -e "const a=require('./npm-audit-production.json'); console.log('Production dependency audit:', JSON.stringify(a.metadata?.vulnerabilities||{}, null, 2)); console.log(JSON.stringify(Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable})),null,2))"
-      - name: Preserve generated audit and lock files
+        run: npm audit --omit=dev --json > npm-audit-production.json || true
+      - name: Preserve audit evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-audit-${{ github.run_id }}
@@ -38,6 +39,10 @@ jobs:
             npm-audit-full.json
             npm-audit-production.json
           if-no-files-found: error
+      - name: Enforce dependency audit policy
+        run: node scripts/check-npm-audit.mjs
+      - name: Domain regression tests
+        run: node scripts/test-domain-rules.mjs
       - name: TypeScript check
         run: npm run typecheck
       - name: ESLint
