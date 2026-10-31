@@ -32,7 +32,7 @@ CREATE OR REPLACE FUNCTION reserve_sku_inventory(
  p_expires_at timestamptz,
  p_idempotency_key text
 ) RETURNS uuid
-LANGUAGE plpgsql AS $
+LANGUAGE plpgsql AS $$
 DECLARE
  existing inventory_reservations%ROWTYPE;
  new_id uuid := gen_random_uuid();
@@ -59,11 +59,11 @@ BEGIN
  INSERT INTO inventory_reservations(id,sku_id,order_item_id,order_id,quantity,expires_at,idempotency_key)
  VALUES(new_id,p_sku_id,p_order_item_id,p_order_id,p_quantity,p_expires_at,p_idempotency_key);
  RETURN new_id;
-END $;
+END $$;
 
 -- Release is idempotent. The row lock ensures only one concurrent caller restores stock.
 CREATE OR REPLACE FUNCTION release_sku_inventory(p_reservation_id uuid)
-RETURNS boolean LANGUAGE plpgsql AS $
+RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE r inventory_reservations%ROWTYPE;
 BEGIN
  SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
@@ -73,11 +73,11 @@ BEGIN
  UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
   WHERE id=r.sku_id AND stock_mode='tracked';
  RETURN true;
-END $;
+END $$;
 
 -- Consume finalizes a reservation after successful payment; stock was already deducted at reserve time.
 CREATE OR REPLACE FUNCTION consume_sku_inventory(p_reservation_id uuid)
-RETURNS boolean LANGUAGE plpgsql AS $
+RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE r inventory_reservations%ROWTYPE;
 BEGIN
  SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
@@ -88,7 +88,7 @@ BEGIN
  END IF;
  UPDATE inventory_reservations SET status='consumed',resolved_at=now() WHERE id=r.id;
  RETURN true;
-END $;
+END $$;
 
 -- Durable transactional outbox. event_key is a stable business idempotency key supplied by the
 -- producer; do not derive it from the random event row id.
