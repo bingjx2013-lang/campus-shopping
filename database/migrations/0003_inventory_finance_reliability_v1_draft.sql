@@ -33,7 +33,7 @@ CREATE OR REPLACE FUNCTION reserve_sku_inventory(
  p_idempotency_key text
 ) RETURNS uuid
 LANGUAGE plpgsql
-SET search_path=campus,pg_temp AS $
+SET search_path=campus,pg_temp AS $$
 DECLARE
  existing inventory_reservations%ROWTYPE;
  new_id uuid := gen_random_uuid();
@@ -90,7 +90,7 @@ END $$;
 -- Release is idempotent. The row lock ensures only one concurrent caller restores stock.
 CREATE OR REPLACE FUNCTION release_sku_inventory(p_reservation_id uuid)
 RETURNS boolean LANGUAGE plpgsql
-SET search_path=campus,pg_temp AS $
+SET search_path=campus,pg_temp AS $$
 DECLARE r inventory_reservations%ROWTYPE;
 BEGIN
  SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
@@ -105,7 +105,7 @@ END $$;
 -- Consume finalizes a reservation after successful payment; stock was already deducted at reserve time.
 CREATE OR REPLACE FUNCTION consume_sku_inventory(p_reservation_id uuid)
 RETURNS boolean LANGUAGE plpgsql
-SET search_path=campus,pg_temp AS $
+SET search_path=campus,pg_temp AS $$
 DECLARE r inventory_reservations%ROWTYPE;
 BEGIN
  SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
