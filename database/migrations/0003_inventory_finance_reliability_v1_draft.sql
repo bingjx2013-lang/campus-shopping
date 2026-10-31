@@ -36,7 +36,7 @@ CREATE TABLE outbox_events (
  attempts int NOT NULL DEFAULT 0 CHECK(attempts>=0),
  locked_until timestamptz,
  published_at timestamptz,
- last_error text,
+ last_error text
 );
 CREATE INDEX idx_outbox_pending ON outbox_events(available_at,occurred_at) WHERE published_at IS NULL;
 
