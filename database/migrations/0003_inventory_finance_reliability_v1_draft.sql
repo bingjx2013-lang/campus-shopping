@@ -104,7 +104,8 @@ END $$;
 
 -- Consume finalizes a reservation after successful payment; stock was already deducted at reserve time.
 CREATE OR REPLACE FUNCTION consume_sku_inventory(p_reservation_id uuid)
-RETURNS boolean LANGUAGE plpgsql AS $$
+RETURNS boolean LANGUAGE plpgsql
+SET search_path=campus,pg_temp AS $
 DECLARE r inventory_reservations%ROWTYPE;
 BEGIN
  SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
