@@ -22,6 +22,161 @@ CREATE TABLE inventory_reservations (
 CREATE INDEX idx_inventory_reservations_live ON inventory_reservations(sku_id,expires_at) WHERE status='reserved';
 CREATE INDEX idx_inventory_reservations_order ON inventory_reservations(order_id,status);
 
+-- Each tracked-stock state transition has exactly one append-only movement record.
+CREATE UNIQUE INDEX uq_inventory_reservation_movement
+ ON inventory_movements(reference_type,reference_id,movement_type)
+ WHERE reference_type='inventory_reservation';
+ALTER TABLE inventory_movements
+ ADD CONSTRAINT ck_inventory_movement_nonzero CHECK(quantity_delta<>0);
+CREATE OR REPLACE FUNCTION prevent_inventory_movement_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $
+BEGIN
+ RAISE EXCEPTION 'inventory movements are append-only; record a compensating movement';
+END $;
+CREATE TRIGGER trg_inventory_movements_append_only
+BEFORE UPDATE OR DELETE ON inventory_movements
+FOR EACH ROW EXECUTE FUNCTION prevent_inventory_movement_mutation();
+
+-- Atomic inventory reservation API. Treat skus.stock_on_hand as AVAILABLE stock.
+-- A failed insert/unique-key race rolls back the stock decrement with the surrounding transaction.
+CREATE OR REPLACE FUNCTION reserve_sku_inventory(
+ p_sku_id uuid,
+ p_order_id uuid,
+ p_order_item_id uuid,
+ p_quantity bigint,
+ p_expires_at timestamptz,
+ p_idempotency_key text
+) RETURNS uuid
+LANGUAGE plpgsql
+SET search_path=campus,pg_temp AS $$
+DECLARE
+ existing inventory_reservations%ROWTYPE;
+ new_id uuid := gen_random_uuid();
+ stock_mode_value text;
+BEGIN
+ IF p_sku_id IS NULL OR p_order_id IS NULL OR p_order_item_id IS NULL
+    OR p_quantity IS NULL OR p_quantity<=0 OR p_expires_at IS NULL OR p_expires_at<=now()
+    OR p_idempotency_key IS NULL OR length(trim(p_idempotency_key))=0 THEN
+   RAISE EXCEPTION 'invalid inventory reservation input' USING ERRCODE='22023';
+ END IF;
+ SELECT * INTO existing FROM inventory_reservations WHERE idempotency_key=p_idempotency_key;
+ IF FOUND THEN
+   IF existing.sku_id IS DISTINCT FROM p_sku_id
+      OR existing.order_id IS DISTINCT FROM p_order_id
+      OR existing.order_item_id IS DISTINCT FROM p_order_item_id
+      OR existing.quantity IS DISTINCT FROM p_quantity
+      OR existing.expires_at IS DISTINCT FROM p_expires_at THEN
+     RAISE EXCEPTION 'idempotency key reused with different reservation data' USING ERRCODE='23505';
+   END IF;
+   RETURN existing.id;
+ END IF;
+ SELECT stock_mode INTO stock_mode_value FROM skus WHERE id=p_sku_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'SKU not found' USING ERRCODE='23503'; END IF;
+ -- Recheck after acquiring the SKU lock: a concurrent request with the same key may
+ -- have completed while this transaction waited for the lock.
+ SELECT * INTO existing FROM inventory_reservations WHERE idempotency_key=p_idempotency_key;
+ IF FOUND THEN
+   IF existing.sku_id IS DISTINCT FROM p_sku_id
+      OR existing.order_id IS DISTINCT FROM p_order_id
+      OR existing.order_item_id IS DISTINCT FROM p_order_item_id
+      OR existing.quantity IS DISTINCT FROM p_quantity
+      OR existing.expires_at IS DISTINCT FROM p_expires_at THEN
+     RAISE EXCEPTION 'idempotency key reused with different reservation data' USING ERRCODE='23505';
+   END IF;
+   RETURN existing.id;
+ END IF;
+ IF NOT EXISTS (
+   SELECT 1
+   FROM order_items oi
+   JOIN merchant_orders mo ON mo.id=oi.merchant_order_id
+   WHERE oi.id=p_order_item_id AND oi.sku_id=p_sku_id AND mo.order_id=p_order_id
+ ) THEN
+   RAISE EXCEPTION 'order item does not belong to order or SKU' USING ERRCODE='23503';
+ END IF;
+ IF stock_mode_value='tracked' THEN
+   UPDATE skus SET stock_on_hand=stock_on_hand-p_quantity
+    WHERE id=p_sku_id AND stock_on_hand>=p_quantity;
+   IF NOT FOUND THEN RAISE EXCEPTION 'insufficient inventory' USING ERRCODE='23514'; END IF;
+ END IF;
+ INSERT INTO inventory_reservations(id,sku_id,order_item_id,order_id,quantity,expires_at,idempotency_key)
+ VALUES(new_id,p_sku_id,p_order_item_id,p_order_id,p_quantity,p_expires_at,p_idempotency_key);
+ IF stock_mode_value='tracked' THEN
+   INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+   VALUES(p_sku_id,'reservation',-p_quantity,'inventory_reservation',new_id,'Stock reserved');
+ END IF;
+ RETURN new_id;
+END $$;
+
+-- Release is idempotent. The row lock ensures only one concurrent caller restores stock.
+CREATE OR REPLACE FUNCTION release_sku_inventory(p_reservation_id uuid)
+RETURNS boolean LANGUAGE plpgsql
+SET search_path=campus,pg_temp AS $$
+DECLARE r inventory_reservations%ROWTYPE;
+BEGIN
+ SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'reservation not found' USING ERRCODE='P0002'; END IF;
+ IF r.status<>'reserved' THEN RETURN false; END IF;
+ UPDATE inventory_reservations SET status='released',resolved_at=now() WHERE id=r.id;
+ UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
+  WHERE id=r.sku_id AND stock_mode='tracked';
+ IF FOUND THEN
+   INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+   VALUES(r.sku_id,'reservation_release',r.quantity,'inventory_reservation',r.id,'Reservation released');
+ END IF;
+ RETURN true;
+END $$;
+
+-- Consume finalizes a reservation after successful payment; stock was already deducted at reserve time.
+CREATE OR REPLACE FUNCTION consume_sku_inventory(p_reservation_id uuid)
+RETURNS boolean LANGUAGE plpgsql
+SET search_path=campus,pg_temp AS $$
+DECLARE r inventory_reservations%ROWTYPE;
+BEGIN
+ SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'reservation not found' USING ERRCODE='P0002'; END IF;
+ IF r.status='consumed' THEN RETURN false; END IF;
+ IF r.status<>'reserved' OR r.expires_at<=now() THEN
+   RAISE EXCEPTION 'reservation is not consumable' USING ERRCODE='23514';
+ END IF;
+ UPDATE inventory_reservations SET status='consumed',resolved_at=now() WHERE id=r.id;
+ RETURN true;
+END $$;
+
+-- Expire reservations in bounded batches. SKIP LOCKED allows multiple workers safely.
+-- Stock is restored in the same transaction as the state transition.
+CREATE OR REPLACE FUNCTION expire_sku_inventory_reservations(p_limit integer DEFAULT 100)
+RETURNS integer LANGUAGE plpgsql
+SET search_path=campus,pg_temp AS $expiry$
+DECLARE
+ r inventory_reservations%ROWTYPE;
+ expired_count integer := 0;
+BEGIN
+ IF p_limit IS NULL OR p_limit<1 OR p_limit>10000 THEN
+   RAISE EXCEPTION 'invalid expiry batch size' USING ERRCODE='22023';
+ END IF;
+ FOR r IN
+   SELECT * FROM inventory_reservations
+    WHERE status='reserved' AND expires_at<=clock_timestamp()
+    ORDER BY expires_at,id
+    FOR UPDATE SKIP LOCKED
+    LIMIT p_limit
+ LOOP
+   UPDATE inventory_reservations
+      SET status='expired',resolved_at=clock_timestamp()
+    WHERE id=r.id AND status='reserved';
+   IF FOUND THEN
+     UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
+      WHERE id=r.sku_id AND stock_mode='tracked';
+     IF FOUND THEN
+       INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+       VALUES(r.sku_id,'reservation_expiry',r.quantity,'inventory_reservation',r.id,'Reservation expired');
+     END IF;
+     expired_count := expired_count+1;
+   END IF;
+ END LOOP;
+ RETURN expired_count;
+END $expiry$;
+
 -- Durable transactional outbox. event_key is a stable business idempotency key supplied by the
 -- producer; do not derive it from the random event row id.
 CREATE TABLE outbox_events (
@@ -225,6 +380,9 @@ CREATE INDEX idx_sessions_active_expiry ON auth_sessions(expires_at) WHERE revok
 CREATE INDEX idx_refunds_case_status ON refunds(case_id,status);
 
 -- IMPORTANT: this migration remains a draft and has not been executed.
+-- Reservation idempotency returns the original reservation ID even after terminal state;
+-- callers MUST read inventory_reservations.status before assuming stock remains reserved.
+-- order_item_id is mandatory so every reservation is tied to a concrete order line.
 -- Posting must occur through a narrowly privileged transactional service/function. The row guards
 -- enforce immutability, but production role grants, entry-level serialization, audit logging,
 -- outbox leasing/retries, inventory arithmetic, and payout reconciliation remain to be implemented.
