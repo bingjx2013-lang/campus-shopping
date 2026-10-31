@@ -44,13 +44,38 @@ BEGIN
  END IF;
  SELECT * INTO existing FROM inventory_reservations WHERE idempotency_key=p_idempotency_key;
  IF FOUND THEN
-   IF existing.sku_id<>p_sku_id OR existing.order_id<>p_order_id OR existing.quantity<>p_quantity THEN
+   IF existing.sku_id IS DISTINCT FROM p_sku_id
+      OR existing.order_id IS DISTINCT FROM p_order_id
+      OR existing.order_item_id IS DISTINCT FROM p_order_item_id
+      OR existing.quantity IS DISTINCT FROM p_quantity
+      OR existing.expires_at IS DISTINCT FROM p_expires_at THEN
      RAISE EXCEPTION 'idempotency key reused with different reservation data' USING ERRCODE='23505';
    END IF;
    RETURN existing.id;
  END IF;
  SELECT stock_mode INTO stock_mode_value FROM skus WHERE id=p_sku_id FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION 'SKU not found' USING ERRCODE='23503'; END IF;
+ -- Recheck after acquiring the SKU lock: a concurrent request with the same key may
+ -- have completed while this transaction waited for the lock.
+ SELECT * INTO existing FROM inventory_reservations WHERE idempotency_key=p_idempotency_key;
+ IF FOUND THEN
+   IF existing.sku_id IS DISTINCT FROM p_sku_id
+      OR existing.order_id IS DISTINCT FROM p_order_id
+      OR existing.order_item_id IS DISTINCT FROM p_order_item_id
+      OR existing.quantity IS DISTINCT FROM p_quantity
+      OR existing.expires_at IS DISTINCT FROM p_expires_at THEN
+     RAISE EXCEPTION 'idempotency key reused with different reservation data' USING ERRCODE='23505';
+   END IF;
+   RETURN existing.id;
+ END IF;
+ IF p_order_item_id IS NOT NULL AND NOT EXISTS (
+   SELECT 1
+   FROM order_items oi
+   JOIN merchant_orders mo ON mo.id=oi.merchant_order_id
+   WHERE oi.id=p_order_item_id AND oi.sku_id=p_sku_id AND mo.order_id=p_order_id
+ ) THEN
+   RAISE EXCEPTION 'order item does not belong to order or SKU' USING ERRCODE='23503';
+ END IF;
  IF stock_mode_value='tracked' THEN
    UPDATE skus SET stock_on_hand=stock_on_hand-p_quantity
     WHERE id=p_sku_id AND stock_on_hand>=p_quantity;
