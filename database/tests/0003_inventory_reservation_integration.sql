@@ -31,5 +31,11 @@ BEGIN
  EXCEPTION WHEN check_violation THEN NULL;
  END;
  IF (SELECT stock_on_hand FROM skus WHERE id=s)<>1 THEN RAISE EXCEPTION 'failed reserve changed stock'; END IF;
+ r:=reserve_sku_inventory(s,o,oi,1,now()+interval '50 milliseconds','ci-expire-'||gen_random_uuid()::text);
+ PERFORM pg_sleep(0.1);
+ IF expire_sku_inventory_reservations(10)<>1 THEN RAISE EXCEPTION 'expiry worker should expire one reservation'; END IF;
+ IF (SELECT status FROM inventory_reservations WHERE id=r)<>'expired' THEN RAISE EXCEPTION 'reservation was not marked expired'; END IF;
+ IF expire_sku_inventory_reservations(10)<>0 THEN RAISE EXCEPTION 'expiry worker must be idempotent'; END IF;
+ IF (SELECT stock_on_hand FROM skus WHERE id=s)<>1 THEN RAISE EXCEPTION 'expiry worker did not restore stock exactly once'; END IF;
 END $$;
 ROLLBACK;
