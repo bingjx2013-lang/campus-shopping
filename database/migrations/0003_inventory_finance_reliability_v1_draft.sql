@@ -118,7 +118,7 @@ END $$;
 -- Expire reservations in bounded batches. SKIP LOCKED allows multiple workers safely.
 -- Stock is restored in the same transaction as the state transition.
 CREATE OR REPLACE FUNCTION expire_sku_inventory_reservations(p_limit integer DEFAULT 100)
-RETURNS integer LANGUAGE plpgsql AS $
+RETURNS integer LANGUAGE plpgsql AS $expiry$
 DECLARE
  r inventory_reservations%ROWTYPE;
  expired_count integer := 0;
@@ -143,7 +143,7 @@ BEGIN
    END IF;
  END LOOP;
  RETURN expired_count;
-END $;
+END $expiry$;
 
 -- Durable transactional outbox. event_key is a stable business idempotency key supplied by the
 -- producer; do not derive it from the random event row id.
