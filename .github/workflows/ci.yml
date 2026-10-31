@@ -64,6 +64,10 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: psql -h localhost -U postgres -d campus_test -v ON_ERROR_STOP=1 -f database/tests/0003_inventory_reservation_integration.sql
+      - name: Test inventory reservation concurrency across sessions
+        env:
+          PGPASSWORD: postgres
+        run: bash database/tests/0003_inventory_reservation_concurrency.sh
       - name: TypeScript check
         run: npm run typecheck
       - name: ESLint
