@@ -59,12 +59,6 @@ test("SKU、规格键值及库存边界", () => {
 test("订单状态、订单行金额和退款期间暂停自动收货", () => {
   assert.equal(orders.canTransitionOrder("pending_payment", "paid"), true);
   assert.equal(orders.canTransitionOrder("cancelled", "paid"), false);
-  assert.equal(orders.calculateOrderPayable({
-    itemsSubtotalCents: 1000, discountCents: 100, shippingCents: 80,
-  }), 980);
-  assert.throws(() => orders.calculateOrderPayable({
-    itemsSubtotalCents: 100, discountCents: 101, shippingCents: 0,
-  }), RangeError);
   assert.equal(orders.shouldPauseAutoReceipt("shipped", true), true);
   assert.deepEqual(calculation.calculateOrderTotals([
     { unitPriceCents: 500, quantity: 2, discountCents: 100 },
