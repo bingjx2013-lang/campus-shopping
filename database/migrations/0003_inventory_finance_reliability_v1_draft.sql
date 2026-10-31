@@ -22,6 +22,74 @@ CREATE TABLE inventory_reservations (
 CREATE INDEX idx_inventory_reservations_live ON inventory_reservations(sku_id,expires_at) WHERE status='reserved';
 CREATE INDEX idx_inventory_reservations_order ON inventory_reservations(order_id,status);
 
+-- Atomic inventory reservation API. Treat skus.stock_on_hand as AVAILABLE stock.
+-- A failed insert/unique-key race rolls back the stock decrement with the surrounding transaction.
+CREATE OR REPLACE FUNCTION reserve_sku_inventory(
+ p_sku_id uuid,
+ p_order_id uuid,
+ p_order_item_id uuid,
+ p_quantity bigint,
+ p_expires_at timestamptz,
+ p_idempotency_key text
+) RETURNS uuid
+LANGUAGE plpgsql AS $
+DECLARE
+ existing inventory_reservations%ROWTYPE;
+ new_id uuid := gen_random_uuid();
+ stock_mode_value text;
+BEGIN
+ IF p_quantity IS NULL OR p_quantity<=0 OR p_expires_at<=now()
+    OR p_idempotency_key IS NULL OR length(trim(p_idempotency_key))=0 THEN
+   RAISE EXCEPTION 'invalid inventory reservation input' USING ERRCODE='22023';
+ END IF;
+ SELECT * INTO existing FROM inventory_reservations WHERE idempotency_key=p_idempotency_key;
+ IF FOUND THEN
+   IF existing.sku_id<>p_sku_id OR existing.order_id<>p_order_id OR existing.quantity<>p_quantity THEN
+     RAISE EXCEPTION 'idempotency key reused with different reservation data' USING ERRCODE='23505';
+   END IF;
+   RETURN existing.id;
+ END IF;
+ SELECT stock_mode INTO stock_mode_value FROM skus WHERE id=p_sku_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'SKU not found' USING ERRCODE='23503'; END IF;
+ IF stock_mode_value='tracked' THEN
+   UPDATE skus SET stock_on_hand=stock_on_hand-p_quantity
+    WHERE id=p_sku_id AND stock_on_hand>=p_quantity;
+   IF NOT FOUND THEN RAISE EXCEPTION 'insufficient inventory' USING ERRCODE='23514'; END IF;
+ END IF;
+ INSERT INTO inventory_reservations(id,sku_id,order_item_id,order_id,quantity,expires_at,idempotency_key)
+ VALUES(new_id,p_sku_id,p_order_item_id,p_order_id,p_quantity,p_expires_at,p_idempotency_key);
+ RETURN new_id;
+END $;
+
+-- Release is idempotent. The row lock ensures only one concurrent caller restores stock.
+CREATE OR REPLACE FUNCTION release_sku_inventory(p_reservation_id uuid)
+RETURNS boolean LANGUAGE plpgsql AS $
+DECLARE r inventory_reservations%ROWTYPE;
+BEGIN
+ SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'reservation not found' USING ERRCODE='P0002'; END IF;
+ IF r.status<>'reserved' THEN RETURN false; END IF;
+ UPDATE inventory_reservations SET status='released',resolved_at=now() WHERE id=r.id;
+ UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
+  WHERE id=r.sku_id AND stock_mode='tracked';
+ RETURN true;
+END $;
+
+-- Consume finalizes a reservation after successful payment; stock was already deducted at reserve time.
+CREATE OR REPLACE FUNCTION consume_sku_inventory(p_reservation_id uuid)
+RETURNS boolean LANGUAGE plpgsql AS $
+DECLARE r inventory_reservations%ROWTYPE;
+BEGIN
+ SELECT * INTO r FROM inventory_reservations WHERE id=p_reservation_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'reservation not found' USING ERRCODE='P0002'; END IF;
+ IF r.status='consumed' THEN RETURN false; END IF;
+ IF r.status<>'reserved' OR r.expires_at<=now() THEN
+   RAISE EXCEPTION 'reservation is not consumable' USING ERRCODE='23514';
+ END IF;
+ UPDATE inventory_reservations SET status='consumed',resolved_at=now() WHERE id=r.id;
+ RETURN true;
+END $;
+
 -- Durable transactional outbox. event_key is a stable business idempotency key supplied by the
 -- producer; do not derive it from the random event row id.
 CREATE TABLE outbox_events (
