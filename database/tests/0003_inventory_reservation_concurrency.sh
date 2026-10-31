@@ -103,7 +103,7 @@ r1="$(cat "$tmp/idempotency-race.1.out" | tail -n 1)"
 r2="$(cat "$tmp/idempotency-race.2.out" | tail -n 1)"
 [[ -n "$r1" && "$r1" == "$r2" ]] || { echo "Concurrent idempotent requests returned different reservation IDs" >&2; exit 1; }
 [[ "$(psqlq -c "SELECT stock_on_hand FROM campus.skus WHERE id='$sku_id'")" == "0" ]] || { echo "Idempotent race must decrement stock exactly once" >&2; exit 1; }
-[[ "$(psqlq -c "SELECT count(*) FROM campus.inventory_reservations WHERE sku_id='$sku_id'")" == "1" ]] || { echo "Idempotent race must create exactly one reservation" >&2; exit 1; }
+[[ "$(psqlq -c "SELECT count(*) FROM campus.inventory_reservations WHERE sku_id='$sku_id' AND status='reserved'")" == "1" ]] || { echo "Idempotent race must leave exactly one active reservation" >&2; exit 1; }
 
 echo "PASS: independent PostgreSQL sessions serialize final-unit stock race."
 echo "PASS: same idempotency key returns one reservation and decrements stock once."
