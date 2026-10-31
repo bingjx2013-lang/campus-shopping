@@ -115,6 +115,36 @@ BEGIN
  RETURN true;
 END $$;
 
+-- Expire reservations in bounded batches. SKIP LOCKED allows multiple workers safely.
+-- Stock is restored in the same transaction as the state transition.
+CREATE OR REPLACE FUNCTION expire_sku_inventory_reservations(p_limit integer DEFAULT 100)
+RETURNS integer LANGUAGE plpgsql AS $
+DECLARE
+ r inventory_reservations%ROWTYPE;
+ expired_count integer := 0;
+BEGIN
+ IF p_limit IS NULL OR p_limit<1 OR p_limit>10000 THEN
+   RAISE EXCEPTION 'invalid expiry batch size' USING ERRCODE='22023';
+ END IF;
+ FOR r IN
+   SELECT * FROM inventory_reservations
+    WHERE status='reserved' AND expires_at<=now()
+    ORDER BY expires_at,id
+    FOR UPDATE SKIP LOCKED
+    LIMIT p_limit
+ LOOP
+   UPDATE inventory_reservations
+      SET status='expired',resolved_at=now()
+    WHERE id=r.id AND status='reserved';
+   IF FOUND THEN
+     UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
+      WHERE id=r.sku_id AND stock_mode='tracked';
+     expired_count := expired_count+1;
+   END IF;
+ END LOOP;
+ RETURN expired_count;
+END $;
+
 -- Durable transactional outbox. event_key is a stable business idempotency key supplied by the
 -- producer; do not derive it from the random event row id.
 CREATE TABLE outbox_events (
