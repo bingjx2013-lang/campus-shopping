@@ -63,8 +63,9 @@ SQL
     (
       psql -X -v ON_ERROR_STOP=1 -qAt \
         -v s="$sku_id" -v o="$order_id" -v oi="$item_id" \
-        -v expiry="$expiry" -v key="$key" \
-        -c "SELECT campus.reserve_sku_inventory(:'s'::uuid,:'o'::uuid,:'oi'::uuid,1,:'expiry'::timestamptz,:'key')"
+        -v expiry="$expiry" -v key="$key" <<'SQL'
+SELECT campus.reserve_sku_inventory(:'s'::uuid,:'o'::uuid,:'oi'::uuid,1,:'expiry'::timestamptz,:'key');
+SQL
     ) >"$tmp/$label.$n.out" 2>"$tmp/$label.$n.err" &
     eval "pid$n=$!"
   done
