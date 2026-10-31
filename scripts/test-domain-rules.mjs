@@ -116,3 +116,21 @@ test("双人审批拒绝重复、自批、跨申请及重复审批阶段", () =>
   assert.equal(admin.validateTwoPersonApproval([first, second, { ...second, approverUserId: "u4" }]).ok, false);
 });
 console.log(`Domain rule tests: ${passed} passed.`);
+
+
+test("生产环境启动必须有足够强的 AUTH_SECRET，且错误不泄露密钥", () => {
+  const fs = require("node:fs");
+  const source = fs.readFileSync(new URL("../src/lib/security-config.ts", import.meta.url), "utf8");
+  const js = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
+  }).outputText;
+  return import("data:text/javascript;base64," + Buffer.from(js).toString("base64")).then((security) => {
+    assert.deepEqual(security.validateSecurityEnvironment({}, true), [{ key: "AUTH_SECRET", code: "MISSING" }]);
+    assert.deepEqual(security.validateSecurityEnvironment({ AUTH_SECRET: "short" }, true), [{ key: "AUTH_SECRET", code: "TOO_SHORT" }]);
+    assert.deepEqual(security.validateSecurityEnvironment({ AUTH_SECRET: "x".repeat(32) }, true), []);
+    assert.deepEqual(security.validateSecurityEnvironment({}, false), []);
+    assert.throws(() => security.assertSecurityEnvironment({ AUTH_SECRET: "do-not-leak-this-secret" }, true), /AUTH_SECRET:TOO_SHORT/);
+    assert.throws(() => security.assertSecurityEnvironment({ AUTH_SECRET: "do-not-leak-this-secret" }, true), (error) => !error.message.includes("do-not-leak-this-secret"));
+  });
+});
+
