@@ -9,7 +9,18 @@ SET search_path=campus,public;
 CREATE TABLE school_config(id smallint PRIMARY KEY DEFAULT 1 CHECK(id=1),school_code text UNIQUE NOT NULL DEFAULT 'MINGDE' CHECK(school_code='MINGDE'),school_name text NOT NULL DEFAULT '明德中英文学校' CHECK(school_name='明德中英文学校'),timezone text NOT NULL DEFAULT 'Asia/Shanghai',config jsonb NOT NULL DEFAULT '{}');
 CREATE TABLE grades(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text UNIQUE NOT NULL,sort_order int NOT NULL DEFAULT 0,active boolean NOT NULL DEFAULT true);
 CREATE TABLE classes(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),grade_id uuid REFERENCES grades(id),name text NOT NULL,school_year text,active boolean NOT NULL DEFAULT true,UNIQUE(grade_id,name,school_year));
-CREATE TABLE users(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_no text UNIQUE,display_name text NOT NULL,email citext UNIQUE,phone text UNIQUE CHECK(phone IS NULL OR phone ~ '^\\+[1-9][0-9]{7,14}
+CREATE TABLE users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_no text UNIQUE,
+  display_name text NOT NULL,
+  email citext UNIQUE,
+  phone text UNIQUE CHECK (phone IS NULL OR phone ~ '^\\+[1-9][0-9]{7,14}$'),
+  password_hash text,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('active','locked','disabled','pending')),
+  user_type text NOT NULL CHECK (user_type IN ('student','parent','staff','merchant','admin')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE student_profiles(user_id uuid PRIMARY KEY REFERENCES users(id),student_no text UNIQUE NOT NULL,class_id uuid REFERENCES classes(id),enrollment_status text NOT NULL DEFAULT 'active');
 CREATE TABLE student_guardians(student_user_id uuid NOT NULL REFERENCES student_profiles(user_id),guardian_user_id uuid NOT NULL REFERENCES users(id),relationship_type text NOT NULL,is_primary boolean NOT NULL DEFAULT false,verified_at timestamptz,valid_from timestamptz NOT NULL DEFAULT now(),valid_until timestamptz,PRIMARY KEY(student_user_id,guardian_user_id,valid_from),CHECK(student_user_id<>guardian_user_id),CHECK(valid_until IS NULL OR valid_until>valid_from));
 -- Prevent overlapping primary-guardian validity periods, including future-dated end times.
