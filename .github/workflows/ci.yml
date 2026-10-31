@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [campus-app-development-v1]
+    branches: [campus-app-development-v1, 'work/**']
   pull_request:
-    branches: [main, campus-app-development-v1]
+    branches: [main, campus-app-development-v1, 'work/**']
 
 permissions:
   contents: read
