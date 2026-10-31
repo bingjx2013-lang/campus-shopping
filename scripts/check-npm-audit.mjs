@@ -10,9 +10,15 @@ async function readAudit(path) {
 
 const full = await readAudit("npm-audit-full.json");
 const production = await readAudit("npm-audit-production.json");
+for (const [label, audit] of [["all dependencies", full], ["production dependencies", production]]) {
+  if (!audit.metadata || !audit.metadata.vulnerabilities) {
+    throw new Error(`Dependency audit result for ${label} is missing vulnerability metadata; failing closed.`);
+  }
+}
+
 const severities = ["low", "moderate", "high", "critical"];
-const fullCounts = full.metadata?.vulnerabilities ?? {};
-const productionCounts = production.metadata?.vulnerabilities ?? {};
+const fullCounts = full.metadata.vulnerabilities;
+const productionCounts = production.metadata.vulnerabilities;
 const fullBlocked = (fullCounts.high ?? 0) + (fullCounts.critical ?? 0);
 const productionBlocked = severities.reduce((sum, level) => sum + (productionCounts[level] ?? 0), 0);
 
