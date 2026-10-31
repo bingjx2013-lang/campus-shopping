@@ -45,6 +45,7 @@ test("SKU、规格键值及库存边界", () => {
   const validSku = { skuCode: "A-1", optionValues: { size: "M" }, priceCents: 100, stock: null };
   assert.deepEqual(catalog.validateSku(validSku), { ok: true });
   assert.equal(catalog.validateSku({ ...validSku, optionValues: { " ": "M" } }).ok, false);
+  assert.equal(catalog.validateSku({ ...validSku, optionValues: null }).ok, false);
   assert.equal(catalog.canReserveStock({ available: null, requested: 999 }), true);
   assert.equal(catalog.canReserveStock({ available: 2, requested: 3 }), false);
   assert.equal(catalog.canReserveStock({ available: -1, requested: 1 }), false);
@@ -53,6 +54,7 @@ test("SKU、规格键值及库存边界", () => {
   assert.equal(catalog.remainingStock(null, 10), null);
   assert.throws(() => catalog.remainingStock(2, 3), RangeError);
   assert.throws(() => catalog.remainingStock(Number.NaN, 0), RangeError);
+  assert.throws(() => catalog.remainingStock(null, -1), RangeError);
 });
 test("订单状态、订单行金额和退款期间暂停自动收货", () => {
   assert.equal(orders.canTransitionOrder("pending_payment", "paid"), true);
@@ -99,6 +101,7 @@ test("账务分录借贷平衡、非法金额和冲正", () => {
       { accountCode: "sales", debitCents: 0, creditCents: Number.MAX_SAFE_INTEGER },
     ],
   }).ok, false);
+  assert.equal(finance.validateJournal({ currency: "USD", lines: [] }).ok, false);
   assert.equal(finance.correctionMode(), "reversal");
 });
 test("双人审批拒绝重复、自批、跨申请及重复审批阶段", () => {
