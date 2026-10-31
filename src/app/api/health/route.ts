@@ -6,5 +6,7 @@ export function GET() {
     service: "campus-shopping",
     mode: "scaffold",
     timestamp: new Date().toISOString(),
+  }, {
+    headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
