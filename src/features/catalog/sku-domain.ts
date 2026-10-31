@@ -17,10 +17,14 @@ export function validateSku(draft: SkuDraft): SkuValidation {
   if (draft.stock !== null && (!Number.isSafeInteger(draft.stock) || draft.stock < 0)) {
     errors.push("库存必须是非负整数，或 null 表示不限库存");
   }
-  for (const [key, value] of Object.entries(draft.optionValues ?? {})) {
-    if (typeof key !== "string" || !key.trim() || typeof value !== "string" || !value.trim()) {
-      errors.push("规格选项名称和值不能为空");
-      break;
+  if (!draft.optionValues || typeof draft.optionValues !== "object" || Array.isArray(draft.optionValues)) {
+    errors.push("规格选项必须是名称和值的对象");
+  } else {
+    for (const [key, value] of Object.entries(draft.optionValues)) {
+      if (!key.trim() || typeof value !== "string" || !value.trim()) {
+        errors.push("规格选项名称和值不能为空");
+        break;
+      }
     }
   }
   return errors.length ? { ok: false, errors } : { ok: true };
@@ -35,9 +39,11 @@ export function canReserveStock(input: { available: number | null; requested: nu
 }
 
 export function remainingStock(available: number | null, reserved: number): number | null {
+  if (!Number.isSafeInteger(reserved) || reserved < 0) {
+    throw new RangeError("库存预留数量无效");
+  }
   if (available === null) return null;
-  if (!Number.isSafeInteger(available) || available < 0
-      || !Number.isSafeInteger(reserved) || reserved < 0 || reserved > available) {
+  if (!Number.isSafeInteger(available) || available < 0 || reserved > available) {
     throw new RangeError("库存或预留数量无效");
   }
   return available - reserved;
