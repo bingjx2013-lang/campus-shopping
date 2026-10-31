@@ -18,9 +18,14 @@ BEGIN
  r2:=reserve_sku_inventory(s,o,oi,3,reservation_expiry,(SELECT idempotency_key FROM inventory_reservations WHERE id=r));
  IF r<>r2 THEN RAISE EXCEPTION 'idempotent reserve did not return same reservation'; END IF;
  IF (SELECT stock_on_hand FROM skus WHERE id=s)<>2 THEN RAISE EXCEPTION 'reserve did not decrement stock'; END IF;
+ IF (SELECT count(*) FROM inventory_movements WHERE reference_type='inventory_reservation' AND reference_id=r AND movement_type='reservation' AND quantity_delta=-3)<>1 THEN RAISE EXCEPTION 'reserve movement ledger entry missing or duplicated'; END IF;
  IF NOT release_sku_inventory(r) THEN RAISE EXCEPTION 'first release should change state'; END IF;
  IF release_sku_inventory(r) THEN RAISE EXCEPTION 'second release must be a no-op'; END IF;
  IF (SELECT stock_on_hand FROM skus WHERE id=s)<>5 THEN RAISE EXCEPTION 'release did not restore stock exactly once'; END IF;
+ IF (SELECT count(*) FROM inventory_movements WHERE reference_type='inventory_reservation' AND reference_id=r AND movement_type='reservation_release' AND quantity_delta=3)<>1 THEN RAISE EXCEPTION 'release movement ledger entry missing or duplicated'; END IF;
+ -- A retry with the same key returns the original ID, but never recreates stock reservation.
+ r2:=reserve_sku_inventory(s,o,oi,3,reservation_expiry,(SELECT idempotency_key FROM inventory_reservations WHERE id=r));
+ IF r2<>r OR (SELECT status FROM inventory_reservations WHERE id=r2)<>'released' OR (SELECT stock_on_hand FROM skus WHERE id=s)<>5 THEN RAISE EXCEPTION 'terminal idempotency retry changed reservation or stock'; END IF;
  r:=reserve_sku_inventory(s,o,oi,4,now()+interval '5 minutes','ci-consume-'||gen_random_uuid()::text);
  IF NOT consume_sku_inventory(r) THEN RAISE EXCEPTION 'consume should change state'; END IF;
  IF consume_sku_inventory(r) THEN RAISE EXCEPTION 'second consume must be a no-op'; END IF;
@@ -37,5 +42,11 @@ BEGIN
  IF (SELECT status FROM inventory_reservations WHERE id=r)<>'expired' THEN RAISE EXCEPTION 'reservation was not marked expired'; END IF;
  IF expire_sku_inventory_reservations(10)<>0 THEN RAISE EXCEPTION 'expiry worker must be idempotent'; END IF;
  IF (SELECT stock_on_hand FROM skus WHERE id=s)<>1 THEN RAISE EXCEPTION 'expiry worker did not restore stock exactly once'; END IF;
+ IF (SELECT count(*) FROM inventory_movements WHERE reference_type='inventory_reservation' AND reference_id=r AND movement_type='reservation_expiry' AND quantity_delta=1)<>1 THEN RAISE EXCEPTION 'expiry movement ledger entry missing or duplicated'; END IF;
+ BEGIN
+   PERFORM reserve_sku_inventory(s,o,NULL,1,now()+interval '1 minute','ci-null-order-item');
+   RAISE EXCEPTION 'reservation without order item unexpectedly succeeded';
+ EXCEPTION WHEN invalid_parameter_value THEN NULL;
+ END;
 END $$;
 ROLLBACK;
