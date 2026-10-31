@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 管理员角色与权限 | `src/features/auth/permissions.ts` | `authorization.ts` 不得另行维护角色/权限表；如有独有策略，迁移为本模块的纯策略函数后删除重复定义 | 集成回归测试直接验证 finance、food_review、support、security_admin 隔离 |
 | SKU 与库存规则 | `src/features/catalog/sku-domain.ts` | `sku.ts` 仅允许作为短期兼容适配；调用方迁移后删除 | 已被领域回归测试覆盖无限库存、负库存、非法规格和预留边界 |
-| 订单状态与核心规则 | `src/features/orders/order-domain.ts` | 不再导出金额公式；`calculation.ts` 是唯一金额计算模块 | 状态转换与退款暂停自动收货由 order-domain 负责；金额与折扣边界由 calculation 负责 |
+| 订单状态与核心规则 | `src/features/orders/order-domain.ts` | `calculation.ts` 不再定义第二套订单状态；金额算法应收敛为 order-domain 的唯一导出或由其调用 | 状态转换、退款暂停自动收货、应付金额边界在集成测试中已有覆盖 |
 | 订单金额计算 | `src/features/orders/calculation.ts` | 不得在其他文件复制金额算法；order-domain 只调用本模块或提供明确兼容导出 | 当前已覆盖多订单行、折扣、运费及安全整数溢出 |
 | 财务分录校验 | `src/features/finance/ledger-domain.ts` | `ledger.ts` 不得维护第二套金额/分录模型；迁移调用方后删除 | 已覆盖 CNY、借贷平衡、空分录、溢出和冲正规则 |
 | 双人审批规则 | `src/features/admin/approval-domain.ts` | `approvals.ts` 不得维护另一套固定/可变审批模型；策略参数化后仅保留一个接口 | 当前回归测试要求两名不同审批人、分阶段、不可自批、不可跨申请 |
@@ -27,7 +27,7 @@
 
 ## 当前风险与待办
 
-- PR #7 的 `src/lib/security-config.ts` 只定义校验函数；尚无证据证明 Next.js 启动或服务端入口调用它。下一步应检查 Next.js instrumentation 与 API 入口，再决定安全接线位置。
+- 已在集成分支新增 `src/lib/security-config.ts` 并由根目录 `instrumentation.ts` 调用：生产 Node.js 服务启动时校验 AUTH_SECRET，缺失或 UTF-8 长度不足 32 字节即阻止启动；错误只显示变量名和错误码，不显示密钥值。
 - 当前集成分支仍是脚手架/领域层，不存在可证明完整的登录、验证码、数据库事务、支付、退款、提现或文件授权闭环。
 - PR #2–#7 保持草稿，不直接合并；PR #8 是唯一集成入口。
 - 数据库 PR #10 仅为设计草案；即使 CI 通过，也必须在隔离 PostgreSQL 15 测试库验证迁移、约束、并发和回滚。
@@ -41,9 +41,3 @@
 - [ ] 幂等键在重试时稳定复用；资金/库存并发测试通过。
 - [ ] CI 的依赖审计、回归、类型、lint、生产构建全部通过。
 - [ ] PostgreSQL 15 隔离库迁移、回滚与并发测试通过。
-
-
-## v1.1 收敛记录
-- 已从 `order-domain.ts` 移除重复的订单应付金额公式；金额计算唯一归属 `calculation.ts`。
-- 回归测试相应调整，避免测试继续依赖重复实现。
-- 角色、SKU、财务、审批的旧模块位于独立草稿 PR 分支；本集成分支未盲目复制或删除它们。后续在统一调用方前，继续保持 PR #2–#7 草稿状态。
