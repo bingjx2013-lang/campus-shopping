@@ -12,13 +12,14 @@ async function loadTs(path) {
   return import("data:text/javascript;base64," + Buffer.from(js).toString("base64"));
 }
 
-const [auth, catalog, orders, calculation, finance, admin] = await Promise.all([
+const [auth, catalog, orders, calculation, finance, admin, security] = await Promise.all([
   loadTs("src/features/auth/permissions.ts"),
   loadTs("src/features/catalog/sku-domain.ts"),
   loadTs("src/features/orders/order-domain.ts"),
   loadTs("src/features/orders/calculation.ts"),
   loadTs("src/features/finance/ledger-domain.ts"),
   loadTs("src/features/admin/approval-domain.ts"),
+  loadTs("src/lib/security-config.ts"),
 ]);
 let passed = 0;
 function test(name, fn) {
