@@ -12,6 +12,20 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: campus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d campus_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +52,10 @@ jobs:
             npm-audit-full.json
             npm-audit-production.json
           if-no-files-found: error
+      - name: Apply draft schema on isolated PostgreSQL 15
+        env:
+          PGPASSWORD: postgres
+        run: psql -h localhost -U postgres -d campus_test -v ON_ERROR_STOP=1 -f database/migrations/0002_campus_shopping_full_schema_v1_draft.sql
       - name: TypeScript check
         run: npm run typecheck
       - name: ESLint
