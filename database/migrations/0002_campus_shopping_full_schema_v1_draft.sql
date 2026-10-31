@@ -14,7 +14,7 @@ CREATE TABLE users (
   user_no text UNIQUE,
   display_name text NOT NULL,
   email citext UNIQUE,
-  phone text UNIQUE CHECK (phone IS NULL OR phone ~ '^\\+[1-9][0-9]{7,14}$'),
+  phone text UNIQUE CHECK (phone IS NULL OR phone ~ '^\+[1-9][0-9]{7,14}$'),
   password_hash text,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('active','locked','disabled','pending')),
   user_type text NOT NULL CHECK (user_type IN ('student','parent','staff','merchant','admin')),
