@@ -1,8 +1,10 @@
+import Link from "next/link";
+
 export default function ProductsPage() {
   return (
     <main className="page">
       <header className="topbar">
-        <a className="brand" href="/">明德校园购</a>
+        <Link className="brand" href="/">明德校园购</Link>
         <span className="tag">商品</span>
       </header>
       <section className="hero">
