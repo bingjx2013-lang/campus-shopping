@@ -22,6 +22,21 @@ CREATE TABLE inventory_reservations (
 CREATE INDEX idx_inventory_reservations_live ON inventory_reservations(sku_id,expires_at) WHERE status='reserved';
 CREATE INDEX idx_inventory_reservations_order ON inventory_reservations(order_id,status);
 
+-- Each tracked-stock state transition has exactly one append-only movement record.
+CREATE UNIQUE INDEX uq_inventory_reservation_movement
+ ON inventory_movements(reference_type,reference_id,movement_type)
+ WHERE reference_type='inventory_reservation';
+ALTER TABLE inventory_movements
+ ADD CONSTRAINT ck_inventory_movement_nonzero CHECK(quantity_delta<>0);
+CREATE OR REPLACE FUNCTION prevent_inventory_movement_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $
+BEGIN
+ RAISE EXCEPTION 'inventory movements are append-only; record a compensating movement';
+END $;
+CREATE TRIGGER trg_inventory_movements_append_only
+BEFORE UPDATE OR DELETE ON inventory_movements
+FOR EACH ROW EXECUTE FUNCTION prevent_inventory_movement_mutation();
+
 -- Atomic inventory reservation API. Treat skus.stock_on_hand as AVAILABLE stock.
 -- A failed insert/unique-key race rolls back the stock decrement with the surrounding transaction.
 CREATE OR REPLACE FUNCTION reserve_sku_inventory(
@@ -39,7 +54,8 @@ DECLARE
  new_id uuid := gen_random_uuid();
  stock_mode_value text;
 BEGIN
- IF p_quantity IS NULL OR p_quantity<=0 OR p_expires_at<=now()
+ IF p_sku_id IS NULL OR p_order_id IS NULL OR p_order_item_id IS NULL
+    OR p_quantity IS NULL OR p_quantity<=0 OR p_expires_at IS NULL OR p_expires_at<=now()
     OR p_idempotency_key IS NULL OR length(trim(p_idempotency_key))=0 THEN
    RAISE EXCEPTION 'invalid inventory reservation input' USING ERRCODE='22023';
  END IF;
@@ -69,7 +85,7 @@ BEGIN
    END IF;
    RETURN existing.id;
  END IF;
- IF p_order_item_id IS NOT NULL AND NOT EXISTS (
+ IF NOT EXISTS (
    SELECT 1
    FROM order_items oi
    JOIN merchant_orders mo ON mo.id=oi.merchant_order_id
@@ -84,6 +100,10 @@ BEGIN
  END IF;
  INSERT INTO inventory_reservations(id,sku_id,order_item_id,order_id,quantity,expires_at,idempotency_key)
  VALUES(new_id,p_sku_id,p_order_item_id,p_order_id,p_quantity,p_expires_at,p_idempotency_key);
+ IF stock_mode_value='tracked' THEN
+   INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+   VALUES(p_sku_id,'reservation',-p_quantity,'inventory_reservation',new_id,'Stock reserved');
+ END IF;
  RETURN new_id;
 END $$;
 
@@ -99,6 +119,10 @@ BEGIN
  UPDATE inventory_reservations SET status='released',resolved_at=now() WHERE id=r.id;
  UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
   WHERE id=r.sku_id AND stock_mode='tracked';
+ IF FOUND THEN
+   INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+   VALUES(r.sku_id,'reservation_release',r.quantity,'inventory_reservation',r.id,'Reservation released');
+ END IF;
  RETURN true;
 END $$;
 
@@ -143,6 +167,10 @@ BEGIN
    IF FOUND THEN
      UPDATE skus SET stock_on_hand=stock_on_hand+r.quantity
       WHERE id=r.sku_id AND stock_mode='tracked';
+     IF FOUND THEN
+       INSERT INTO inventory_movements(sku_id,movement_type,quantity_delta,reference_type,reference_id,note)
+       VALUES(r.sku_id,'reservation_expiry',r.quantity,'inventory_reservation',r.id,'Reservation expired');
+     END IF;
      expired_count := expired_count+1;
    END IF;
  END LOOP;
@@ -352,6 +380,9 @@ CREATE INDEX idx_sessions_active_expiry ON auth_sessions(expires_at) WHERE revok
 CREATE INDEX idx_refunds_case_status ON refunds(case_id,status);
 
 -- IMPORTANT: this migration remains a draft and has not been executed.
+-- Reservation idempotency returns the original reservation ID even after terminal state;
+-- callers MUST read inventory_reservations.status before assuming stock remains reserved.
+-- order_item_id is mandatory so every reservation is tied to a concrete order line.
 -- Posting must occur through a narrowly privileged transactional service/function. The row guards
 -- enforce immutability, but production role grants, entry-level serialization, audit logging,
 -- outbox leasing/retries, inventory arithmetic, and payout reconciliation remain to be implemented.
