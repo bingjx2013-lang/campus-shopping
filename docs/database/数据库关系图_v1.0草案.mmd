@@ -1,0 +1,53 @@
+# 校园购数据库关系图 v1.0（草案）
+> 明德中英文学校单校；逻辑关系概览。字段级细节以 0002/0003 草案为准。
+
+```mermaid
+erDiagram
+  GRADES ||--o{ CLASSES : contains
+  CLASSES ||--o{ STUDENT_PROFILES : enrolls
+  USERS ||--o| STUDENT_PROFILES : profile
+  USERS ||--o{ USER_ROLES : assigned
+  ROLES ||--o{ USER_ROLES : grants
+  ROLES ||--o{ ROLE_PERMISSIONS : includes
+  PERMISSIONS ||--o{ ROLE_PERMISSIONS : defines
+  USERS ||--o{ AUTH_SESSIONS : opens
+  USERS ||--o{ MERCHANTS : owns
+  MERCHANTS ||--o{ PRODUCTS : lists
+  PRODUCTS ||--o{ SKUS : has
+  PRODUCTS ||--o{ PRODUCT_MEDIA : contains
+  SKUS ||--o{ INVENTORY_MOVEMENTS : records
+  SKUS ||--o{ INVENTORY_RESERVATIONS : reserves
+  USERS ||--o{ ORDERS : places
+  ORDERS ||--|{ MERCHANT_ORDERS : splits
+  MERCHANTS ||--o{ MERCHANT_ORDERS : fulfills
+  MERCHANT_ORDERS ||--|{ ORDER_ITEMS : contains
+  ORDER_ITEMS ||--o{ SHIPMENT_ITEMS : ships
+  SHIPMENTS ||--|{ SHIPMENT_ITEMS : groups
+  ORDERS ||--o{ PAYMENT_ATTEMPTS : pays
+  USERS ||--o{ WALLETS : owns
+  MERCHANTS ||--o{ WALLETS : owns
+  WALLETS ||--o{ WALLET_TRANSACTIONS : records
+  ORDERS ||--o{ AFTERSALES_CASES : disputes
+  AFTERSALES_CASES ||--o{ REFUNDS : requests
+  REFUNDS ||--o{ REFUND_FREEZE_ALLOCATIONS : freezes
+  MERCHANT_ORDERS ||--o{ REFUND_FREEZE_ALLOCATIONS : allocates
+  MERCHANTS ||--o{ MERCHANT_RECEIVABLES : owes
+  MERCHANTS ||--o{ SETTLEMENT_BATCHES : settles
+  SETTLEMENT_BATCHES ||--o{ SETTLEMENT_ITEMS : contains
+  MERCHANTS ||--o{ MERCHANT_WITHDRAWALS : withdraws
+  MERCHANTS ||--o{ SETTLEMENT_HOLDS : holds
+  JOURNAL_ENTRIES ||--|{ JOURNAL_LINES : posts
+  LEDGER_ACCOUNTS ||--o{ JOURNAL_LINES : classifies
+  OUTBOX_EVENTS }o--|| ORDERS : emits
+  USERS ||--o{ MESSAGES : sends
+  CONVERSATIONS ||--o{ MESSAGES : contains
+  USERS ||--o{ NOTIFICATIONS : receives
+  USERS ||--o{ AUDIT_LOGS : acts
+```
+
+## 重要说明
+- 这是业务实体关系图，不代表每条关系都已在 SQL 中建立外键；例如钱包 owner 使用多态 owner_type/owner_id。
+- 订单总单拆商家子单；子单含订单商品，支持一个商品行分批发货。
+- SKU 库存预占通过 reservation 状态机实现；不能只靠库存数字字段避免超卖。
+- 退款冻结分配、商家应收、结算暂停和提现申请在 0003 草案中补充。
+- 复式记账需借贷平衡延迟约束；所有资金写入必须由受控事务服务完成。
