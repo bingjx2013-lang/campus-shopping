@@ -76,7 +76,7 @@ CREATE INDEX idx_wallet_tx_wallet_created ON wallet_transactions(wallet_id,creat
 CREATE INDEX idx_auth_sessions_user_expiry ON auth_sessions(user_id,expires_at) WHERE revoked_at IS NULL;
 CREATE INDEX idx_messages_conversation_created ON messages(conversation_id,created_at);
 CREATE INDEX idx_audit_logs_target ON audit_logs(target_type,target_id,created_at DESC);
--- TODO before production: deferred trigger enforcing debit=credit per journal entry;
--- inventory reservations/releases; reliable outbox; withdrawal and merchant receivable
--- tables; refund allocation/freeze tables; atomic stock/payment/refund/settlement services.
+-- Follow-up reliability structures are drafted in 0003_inventory_finance_reliability_v1_draft.sql.
+-- Both migrations remain unexecuted drafts. Atomic stock/payment/refund/settlement services,
+-- outbox publisher/consumer, payout reconciliation, and integration tests are still required.
 COMMIT;
