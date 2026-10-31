@@ -21,6 +21,23 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Audit all dependencies
+        run: |
+          npm audit --json > npm-audit-full.json || true
+          node -e "const a=require('./npm-audit-full.json'); console.log(JSON.stringify({metadata:a.metadata?.vulnerabilities, advisories:Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:v.via.map(x=>typeof x==='string'?x:{name:x.name,title:x.title,range:x.range,url:x.url})}))},null,2))"
+      - name: Audit production dependencies
+        run: |
+          npm audit --omit=dev --json > npm-audit-production.json || true
+          node -e "const a=require('./npm-audit-production.json'); console.log('Production dependency audit:', JSON.stringify(a.metadata?.vulnerabilities||{}, null, 2)); console.log(JSON.stringify(Object.entries(a.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,range:v.range,fixAvailable:v.fixAvailable})),null,2))"
+      - name: Preserve generated audit and lock files
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-${{ github.run_id }}
+          path: |
+            package-lock.json
+            npm-audit-full.json
+            npm-audit-production.json
+          if-no-files-found: error
       - name: TypeScript check
         run: npm run typecheck
       - name: ESLint
